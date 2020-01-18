@@ -8,6 +8,10 @@ from selfdrive.car.toyota.values import CAR, DBC, STEER_THRESHOLD, TSS2_CAR, NO_
 
 GearShifter = car.CarState.GearShifter
 
+from common.realtime import sec_since_boot
+from common.params import Params
+params = Params()
+
 def parse_gear_shifter(gear, vals):
 
   val_to_capnp = {'P': GearShifter.park, 'R': GearShifter.reverse, 'N': GearShifter.neutral,
@@ -25,7 +29,6 @@ def get_can_parser(CP):
     ("STEER_ANGLE", "STEER_ANGLE_SENSOR", 0),
     ("GEAR", "GEAR_PACKET", 0),
     ("BRAKE_PRESSED", "BRAKE_MODULE", 0),
-    ("GAS_PEDAL", "GAS_PEDAL", 0),
     ("WHEEL_SPEED_FL", "WHEEL_SPEEDS", 0),
     ("WHEEL_SPEED_FR", "WHEEL_SPEEDS", 0),
     ("WHEEL_SPEED_RL", "WHEEL_SPEEDS", 0),
@@ -46,18 +49,35 @@ def get_can_parser(CP):
     ("LKA_STATE", "EPS_STATUS", 0),
     ("IPAS_STATE", "EPS_STATUS", 1),
     ("BRAKE_LIGHTS_ACC", "ESP_CONTROL", 0),
-    ("AUTO_HIGH_BEAM", "LIGHT_STALK", 0),
   ]
 
   checks = [
-    ("BRAKE_MODULE", 40),
-    ("GAS_PEDAL", 33),
     ("WHEEL_SPEEDS", 80),
     ("STEER_ANGLE_SENSOR", 80),
     ("PCM_CRUISE", 33),
     ("STEER_TORQUE_SENSOR", 50),
     ("EPS_STATUS", 25),
   ]
+
+  if CP.carFingerprint in [CAR.LEXUS_ISH, CAR.LEXUS_GSH]:
+    signals.append(("GAS_PEDAL", "GAS_PEDAL_ALT", 0))
+    signals.append(("MAIN_ON", "PCM_CRUISE_ALT", 0))
+    signals.append(("SET_SPEED", "PCM_CRUISE_ALT", 0))
+    signals.append(("AUTO_HIGH_BEAM", "LIGHT_STALK_ISH", 0))
+    checks += [
+      ("BRAKE_MODULE", 50),
+      ("GAS_PEDAL_ALT", 50),
+      ("PCM_CRUISE_ALT", 1),
+    ]
+  else:
+    signals += [
+      ("AUTO_HIGH_BEAM", "LIGHT_STALK", 0),
+      ("GAS_PEDAL", "GAS_PEDAL", 0),
+    ]
+    checks += [
+      ("BRAKE_MODULE", 40),
+      ("GAS_PEDAL", 33),
+    ]
 
   if CP.carFingerprint == CAR.LEXUS_IS:
     signals.append(("MAIN_ON", "DSU_CRUISE", 0))
@@ -69,7 +89,7 @@ def get_can_parser(CP):
     signals.append(("LOW_SPEED_LOCKOUT", "PCM_CRUISE_2", 0))
     checks.append(("PCM_CRUISE_2", 33))
 
-  if CP.carFingerprint in NO_DSU_CAR or HD_STEER_SENSOR_CAR:
+  if CP.carFingerprint in NO_DSU_CAR or HD_STEER_SENSOR_CAR or CP.carFingerprint == CAR.LEXUS_ISH:
     signals += [("STEER_ANGLE", "STEER_TORQUE_SENSOR", 0)]
 
   if CP.carFingerprint == CAR.PRIUS or CAR.PRIUS_2019:
@@ -80,6 +100,8 @@ def get_can_parser(CP):
     signals.append(("INTERCEPTOR_GAS", "GAS_SENSOR", 0))
     signals.append(("INTERCEPTOR_GAS2", "GAS_SENSOR", 0))
     checks.append(("GAS_SENSOR", 50))
+
+  checks = []
 
   return CANParser(DBC[CP.carFingerprint]['pt'], signals, checks, 0)
 
@@ -118,7 +140,17 @@ class CarState():
                          K=[[0.12287673], [0.29666309]])
     self.v_ego = 0.0
 
+    # dragonpilot
+    self.dragon_toyota_stock_dsu = False
+    self.ts_last_check = 0.
+
   def update(self, cp, cp_cam):
+    # dragonpilot, don't check for param too often as it's a kernel call
+    ts = sec_since_boot()
+    if ts - self.ts_last_check > 5.:
+      self.dragon_toyota_stock_dsu = True if params.get("DragonToyotaStockDSU", encoding='utf8') == "1" else False
+      self.ts_last_check = ts
+
     # update prevs, update must run once per loop
     self.prev_left_blinker_on = self.left_blinker_on
     self.prev_right_blinker_on = self.right_blinker_on
@@ -130,6 +162,8 @@ class CarState():
     self.brake_pressed = cp.vl["BRAKE_MODULE"]['BRAKE_PRESSED']
     if self.CP.enableGasInterceptor:
       self.pedal_gas = (cp.vl["GAS_SENSOR"]['INTERCEPTOR_GAS'] + cp.vl["GAS_SENSOR"]['INTERCEPTOR_GAS2']) / 2.
+    elif self.CP.carFingerprint in [CAR.LEXUS_ISH, CAR.LEXUS_GSH]:
+      self.pedal_gas = cp.vl["GAS_PEDAL_ALT"]['GAS_PEDAL']
     else:
       self.pedal_gas = cp.vl["GAS_PEDAL"]['GAS_PEDAL']
     self.car_gas = self.pedal_gas
@@ -154,7 +188,7 @@ class CarState():
 
     if self.CP.carFingerprint in TSS2_CAR:
       self.angle_steers = cp.vl["STEER_TORQUE_SENSOR"]['STEER_ANGLE']
-    elif self.CP.carFingerprint in NO_DSU_CAR or HD_STEER_SENSOR_CAR:
+    elif self.CP.carFingerprint in NO_DSU_CAR or HD_STEER_SENSOR_CAR or self.CP.carFingerprint == CAR.LEXUS_ISH:
       # cp.vl["STEER_TORQUE_SENSOR"]['STEER_ANGLE'] is zeroed to where the steering angle is at start.
       # need to apply an offset as soon as the steering angle measurements are both received
       self.angle_steers = cp.vl["STEER_TORQUE_SENSOR"]['STEER_ANGLE'] - self.angle_offset
@@ -169,6 +203,8 @@ class CarState():
     self.gear_shifter = parse_gear_shifter(can_gear, self.shifter_values)
     if self.CP.carFingerprint == CAR.LEXUS_IS:
       self.main_on = cp.vl["DSU_CRUISE"]['MAIN_ON']
+    elif self.CP.carFingerprint in [CAR.LEXUS_ISH, CAR.LEXUS_GSH]:
+      self.main_on = cp.vl["PCM_CRUISE_ALT"]['MAIN_ON']
     else:
       self.main_on = cp.vl["PCM_CRUISE_2"]['MAIN_ON']
     self.left_blinker_on = cp.vl["STEERING_LEVERS"]['TURN_SIGNALS'] == 1
@@ -188,15 +224,34 @@ class CarState():
     if self.CP.carFingerprint == CAR.LEXUS_IS:
       self.v_cruise_pcm = cp.vl["DSU_CRUISE"]['SET_SPEED']
       self.low_speed_lockout = False
+    elif self.CP.carFingerprint in [CAR.LEXUS_ISH, CAR.LEXUS_GSH]:
+      self.v_cruise_pcm = cp.vl["PCM_CRUISE_ALT"]['SET_SPEED']
+      self.low_speed_lockout = False
     else:
       self.v_cruise_pcm = cp.vl["PCM_CRUISE_2"]['SET_SPEED']
       self.low_speed_lockout = cp.vl["PCM_CRUISE_2"]['LOW_SPEED_LOCKOUT'] == 2
-    self.pcm_acc_status = cp.vl["PCM_CRUISE"]['CRUISE_STATE']
+    if self.CP.carFingerprint in [CAR.LEXUS_ISH, CAR.LEXUS_GSH]:
+      # Lexus ISH does not have curise status value (always 0), so we use curise_active value instead
+      self.pcm_acc_status = cp.vl["PCM_CRUISE"]['CRUISE_ACTIVE']
+    else:
+      self.pcm_acc_status = cp.vl["PCM_CRUISE"]['CRUISE_STATE']
     self.pcm_acc_active = bool(cp.vl["PCM_CRUISE"]['CRUISE_ACTIVE'])
     self.brake_lights = bool(cp.vl["ESP_CONTROL"]['BRAKE_LIGHTS_ACC'] or self.brake_pressed)
     if self.CP.carFingerprint == CAR.PRIUS or CAR.PRIUS_2019:
       self.generic_toggle = cp.vl["AUTOPARK_STATUS"]['STATE'] != 0
+    elif self.CP.carFingerprint in [CAR.LEXUS_ISH, CAR.LEXUS_GSH]:
+      self.generic_toggle = bool(cp.vl["LIGHT_STALK_ISH"]['AUTO_HIGH_BEAM'])
     else:
       self.generic_toggle = bool(cp.vl["LIGHT_STALK"]['AUTO_HIGH_BEAM'])
 
     self.stock_aeb = bool(cp_cam.vl["PRE_COLLISION"]["PRECOLLISION_ACTIVE"] and cp_cam.vl["PRE_COLLISION"]["FORCE"] < -1e-5)
+
+    if self.dragon_toyota_stock_dsu and self.generic_toggle and self.main_on:
+      enable_acc = True
+      if not self.gear_shifter == GearShifter.drive or not self.seatbelt or not self.door_all_closed:
+       enable_acc = False
+      self.pcm_acc_active = enable_acc
+      if self.standstill:
+        self.pcm_acc_status = 7
+      else:
+        self.pcm_acc_status = 1

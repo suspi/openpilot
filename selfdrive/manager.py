@@ -7,6 +7,7 @@ import errno
 import signal
 import subprocess
 import datetime
+from selfdrive.dragonpilot.dragonconf import dragonpilot_set_params
 
 from common.basedir import BASEDIR
 sys.path.append(os.path.join(BASEDIR, "pyextra"))
@@ -143,6 +144,9 @@ managed_processes = {
   "updated": "selfdrive.updated",
   "monitoringd": ("selfdrive/modeld", ["./monitoringd"]),
   "modeld": ("selfdrive/modeld", ["./modeld"]),
+  "dashcamd": "selfdrive.dragonpilot.dashcamd.dashcamd",
+  "shutdownd": "selfdrive.dragonpilot.shutdownd.shutdownd",
+  "appd": "selfdrive.dragonpilot.appd.appd",
 }
 daemon_processes = {
   "manage_athenad": ("selfdrive.athena.manage_athenad", "AthenadPid"),
@@ -169,6 +173,8 @@ persistent_processes = [
   'uploader',
   'ui',
   'updated',
+  'shutdownd',
+  'appd',
 ]
 
 car_started_processes = [
@@ -186,6 +192,7 @@ car_started_processes = [
   'ubloxd',
   'gpsd',
   'deleter',
+  'dashcamd',
 ]
 
 def register_managed_process(name, desc, car_started=False):
@@ -473,6 +480,8 @@ def main():
   if params.get("OpenpilotEnabledToggle") is None:
     params.put("OpenpilotEnabledToggle", "1")
 
+  dragonpilot_set_params(params)
+
   # is this chffrplus?
   if os.getenv("PASSIVE") is not None:
     params.put("Passive", str(int(os.getenv("PASSIVE"))))
@@ -487,6 +496,13 @@ def main():
 
   if os.getenv("PREPAREONLY") is not None:
     return
+
+  if params.get("DragonEnableLogger", encoding='utf8') == "0":
+    del managed_processes['loggerd']
+    del managed_processes['tombstoned']
+
+  if params.get("DragonEnableUploader", encoding='utf8') == "0":
+    del managed_processes['uploader']
 
   # SystemExit on sigterm
   signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(1))
