@@ -8,6 +8,9 @@ from selfdrive.car.toyota.values import ECU, ECU_FINGERPRINT, CAR, NO_STOP_TIMER
 from selfdrive.car import STD_CARGO_KG, scale_rot_inertia, scale_tire_stiffness, is_ecu_disconnected, gen_empty_fingerprint
 from selfdrive.swaglog import cloudlog
 from selfdrive.car.interfaces import CarInterfaceBase
+from common.realtime import sec_since_boot
+from common.params import Params
+params = Params()
 
 ButtonType = car.CarState.ButtonEvent.Type
 GearShifter = car.CarState.GearShifter
@@ -31,6 +34,13 @@ class CarInterface(CarInterfaceBase):
     self.CC = None
     if CarController is not None:
       self.CC = CarController(self.cp.dbc_name, CP.carFingerprint, CP.enableCamera, CP.enableDsu, CP.enableApgs)
+
+    # dragonpilot
+    self.dragon_toyota_stock_dsu = False
+    self.dragon_enable_steering_on_signal = False
+    self.dragon_allow_gas = False
+    self.ts_last_check = 0.
+    self.dragon_lat_ctrl = True
 
   @staticmethod
   def compute_gb(accel, speed):
@@ -234,6 +244,26 @@ class CarInterface(CarInterfaceBase):
       ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.3], [0.05]]
       ret.lateralTuning.pid.kf = 0.00007
 
+    elif candidate == CAR.LEXUS_ISH:
+        stop_and_go = True # set to true because it's a hybrid
+        ret.safetyParam = 130
+        ret.wheelbase = 2.79908
+        ret.steerRatio = 13.3
+        tire_stiffness_factor = 0.444
+        ret.mass = 3736.8 * CV.LB_TO_KG + STD_CARGO_KG
+        ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.3], [0.05]]
+        ret.lateralTuning.pid.kf = 0.00006
+
+    elif candidate == CAR.LEXUS_GSH:
+      stop_and_go = True # set to true because it's a hybrid
+      ret.safetyParam = 77
+      ret.wheelbase = 2.84988
+      ret.steerRatio = 13.3
+      tire_stiffness_factor = 0.444
+      ret.mass = 4112 * CV.LB_TO_KG + STD_CARGO_KG
+      ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.3], [0.05]]
+      ret.lateralTuning.pid.kf = 0.00006
+
     ret.steerRateCost = 1.
     ret.centerToFront = ret.wheelbase * 0.44
 
@@ -296,6 +326,15 @@ class CarInterface(CarInterfaceBase):
 
   # returns a car.CarState
   def update(self, c, can_strings):
+    # dragonpilot, don't check for param too often as it's a kernel call
+    ts = sec_since_boot()
+    if ts - self.ts_last_check > 5.:
+      self.dragon_enable_steering_on_signal = True if params.get("DragonEnableSteeringOnSignal", encoding='utf8') == "1" else False
+      self.dragon_allow_gas = True if params.get("DragonAllowGas", encoding='utf8') == "1" else False
+      self.dragon_toyota_stock_dsu = True if params.get("DragonToyotaStockDSU", encoding='utf8') == "1" else False
+      self.dragon_lat_ctrl = False if params.get("DragonLatCtrl", encoding='utf8') == "0" else True
+      self.ts_last_check = ts
+
     # ******************* do can recv *******************
     self.cp.update_strings(can_strings)
     self.cp_cam.update_strings(can_strings)
@@ -397,7 +436,11 @@ class CarInterface(CarInterfaceBase):
       events.append(create_event('wrongCarMode', [ET.NO_ENTRY, ET.USER_DISABLE]))
     if ret.gearShifter == GearShifter.reverse and self.CP.openpilotLongitudinalControl:
       events.append(create_event('reverseGear', [ET.NO_ENTRY, ET.IMMEDIATE_DISABLE]))
-    if self.CS.steer_error:
+    if not self.dragon_lat_ctrl:
+      events.append(create_event('manualSteeringRequired', [ET.WARNING]))
+    elif (self.CS.left_blinker_on or self.CS.right_blinker_on) and self.dragon_enable_steering_on_signal:
+      events.append(create_event('manualSteeringRequiredBlinkersOn', [ET.WARNING]))
+    elif self.CS.steer_error:
       events.append(create_event('steerTempUnavailable', [ET.NO_ENTRY, ET.WARNING]))
     if self.CS.low_speed_lockout and self.CP.openpilotLongitudinalControl:
       events.append(create_event('lowSpeedLockout', [ET.NO_ENTRY, ET.PERMANENT]))
@@ -416,13 +459,19 @@ class CarInterface(CarInterfaceBase):
     elif not ret.cruiseState.enabled:
       events.append(create_event('pcmDisable', [ET.USER_DISABLE]))
 
-    # disable on pedals rising edge or when brake is pressed and speed isn't zero
-    if (ret.gasPressed and not self.gas_pressed_prev) or \
-       (ret.brakePressed and (not self.brake_pressed_prev or ret.vEgo > 0.001)):
-      events.append(create_event('pedalPressed', [ET.NO_ENTRY, ET.USER_DISABLE]))
+    if not self.dragon_toyota_stock_dsu:
+      # DragonAllowGas
+      if not self.dragon_allow_gas:
+        # disable on pedals rising edge or when brake is pressed and speed isn't zero
+        if (ret.gasPressed and not self.gas_pressed_prev) or \
+           (ret.brakePressed and (not self.brake_pressed_prev or ret.vEgo > 0.001)):
+          events.append(create_event('pedalPressed', [ET.NO_ENTRY, ET.USER_DISABLE]))
 
-    if ret.gasPressed:
-      events.append(create_event('pedalPressed', [ET.PRE_ENABLE]))
+        if ret.gasPressed:
+          events.append(create_event('pedalPressed', [ET.PRE_ENABLE]))
+      else:
+        if ret.brakePressed and (not self.brake_pressed_prev or ret.vEgo > 0.001):
+          events.append(create_event('pedalPressed', [ET.NO_ENTRY, ET.USER_DISABLE]))
 
     ret.events = events
 

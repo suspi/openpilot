@@ -1,11 +1,12 @@
 import os
-from common.params import Params
+from common.params import Params, put_nonblocking
 from common.basedir import BASEDIR
 from selfdrive.car.fingerprints import eliminate_incompatible_cars, all_known_cars
 from selfdrive.car.vin import get_vin, VIN_UNKNOWN
 from selfdrive.swaglog import cloudlog
 import cereal.messaging as messaging
 from selfdrive.car import gen_empty_fingerprint
+import pickle
 
 def get_startup_alert(car_recognized, controller_available):
   alert = 'startup'
@@ -73,6 +74,17 @@ def fingerprint(logcan, sendcan, has_relay):
   car_fingerprint = None
   done = False
 
+  params = Params()
+  dragon_cache_car = params.get("DragonCacheCar", encoding='utf8')
+  dragon_cached_fp = params.get("DragonCachedFP")
+  dragon_cached_model = params.get("DragonCachedModel")
+
+  if dragon_cache_car == "1" and dragon_cached_fp != "" and dragon_cached_model != "":
+    car_fingerprint = pickle.loads(dragon_cached_model)
+    finger = pickle.loads(dragon_cached_fp)
+    vin = pickle.loads(params.get("DragonCachedVIN"))
+    done = True
+
   while not done:
     a = messaging.get_one_can(logcan)
 
@@ -106,6 +118,13 @@ def fingerprint(logcan, sendcan, has_relay):
     done = failed or succeeded
 
     frame += 1
+
+    if succeeded:
+      put_nonblocking("DragonCachedModel", pickle.dumps(car_fingerprint))
+      put_nonblocking("DragonCachedFP", pickle.dumps(finger))
+      put_nonblocking("DragonCachedVIN", pickle.dumps(vin))
+      put_nonblocking("DragonCarModel", car_fingerprint)
+      put_nonblocking("DragonCarVIN", vin)
 
   cloudlog.warning("fingerprinted %s", car_fingerprint)
   return car_fingerprint, finger, vin
