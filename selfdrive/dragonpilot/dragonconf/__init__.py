@@ -2,9 +2,9 @@
 from common.params import Params, put_nonblocking
 
 default_conf = {
-  'DragonEnableDashcam': '1',
+  'DragonEnableDashcam': '0',
   'DragonEnableDriverSafetyCheck': '1',
-  'DragonAutoShutdownAt': '30', # in minute
+  'DragonAutoShutdownAt': '0', # in minute
   'DragonEnableSteeringOnSignal': '0',
   'DragonEnableLogger': '1',
   'DragonEnableUploader': '1',
@@ -13,15 +13,17 @@ default_conf = {
   'DragonCachedModel': '', # for cache car
   'DragonCachedFP': '', # for cache car
   'DragonCachedVIN': '', # for cache car
+  'DragonCachedCarFW': '', # for cache car
+  'DragonCachedSource': '', # for cache car
   'DragonAllowGas': '0',
   'DragonToyotaStockDSU': '0',
   'DragonLatCtrl': '1',
   'DragonUISpeed': '1',
-  'DragonUIEvent': '0',
-  'DragonUIMaxSpeed': '0',
-  'DragonUIFace': '0',
+  'DragonUIEvent': '1',
+  'DragonUIMaxSpeed': '1',
+  'DragonUIFace': '1',
   'DragonUIDev': '0',
-  'DragonUIDevMini': '1',
+  'DragonUIDevMini': '0',
   # 3rd party app
   'DragonEnableTomTom': '0',
   'DragonBootTomTom': '0',
@@ -34,7 +36,7 @@ default_conf = {
   'DragonRunAegis': '0',
   'DragonEnableMixplorer': '0',
   'DragonRunMixplorer': '0',
-  'DragonSteeringMonitorTimer': '3',
+  'DragonSteeringMonitorTimer': '3', # 180 secs
   'DragonCameraOffset': '6',
   'DragonUIVolumeBoost': '0',
   'DragonGreyPandaMode': '0',
@@ -50,16 +52,15 @@ default_conf = {
   'DragonUIBlinker': '0',
   'DragonEnableDriverMonitoring': '1',
   'DragonCarModel': '',
-  'DragonCarVIN': '',
   'DragonEnableSlowOnCurve': '1',
   'DragonEnableLeadCarMovingAlert': '0',
   'DragonToyotaSnGMod': '0',
   'DragonEnableSRLearner': '1',
   'DragonWazeMode': '0',
   'DragonRunWaze': '0',
-  'DragonEnableAssistedLC': '0',
+  'DragonEnableAssistedLC': '1',
   'DragonEnableAutoLC': '0',
-  'DragonAssistedLCMinMPH': 37,
+  'DragonAssistedLCMinMPH': 45,
   'DragonAutoLCMinMPH': 60,
   'DragonAutoLCDelay': 2,
   'DragonBTG': 0,
@@ -67,8 +68,7 @@ default_conf = {
 }
 
 deprecated_conf = {
-  'DragonIsEON': '',
-  'DragonHWChecked': '',
+  'DragonCarVIN': '',
 }
 
 deprecated_conf_invert = {

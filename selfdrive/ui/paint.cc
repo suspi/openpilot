@@ -807,19 +807,11 @@ static void ui_draw_infobar(UIState *s) {
 
   char infobar[100];
   // create time string
-  char date_time[17];
+  char date_time[20];
   time_t rawtime = time(NULL);
   struct tm timeinfo;
   localtime_r(&rawtime, &timeinfo);
-  strftime(date_time, sizeof(date_time),"%D %T", &timeinfo);
-
-  // Create temp string
-  char temp[6];
-  snprintf(temp, sizeof(temp), "%02.0f°C", s->scene.pa0);
-
-  // create battery percentage string
-  char battery[4];
-  snprintf(battery, sizeof(battery), "%02d%%", s->scene.batteryPercent);
+  strftime(date_time, sizeof(date_time),"%F %T", &timeinfo);
 
   if (s->dragon_ui_dev_mini) {
     char rel_steer[9];
@@ -842,10 +834,8 @@ static void ui_draw_infobar(UIState *s) {
     snprintf(
       infobar,
       sizeof(infobar),
-      "%s /TMP: %s /BAT: %s /REL: %s /DES: %s /DIS: %s",
+      "%s /REL: %s /DES: %s /DIS: %s",
       date_time,
-      temp,
-      battery,
       rel_steer,
       des_steer,
       lead_dist
@@ -854,10 +844,8 @@ static void ui_draw_infobar(UIState *s) {
     snprintf(
       infobar,
       sizeof(infobar),
-      "%s /TMP: %s /BAT: %s",
-      date_time,
-      temp,
-      battery
+      "%s",
+      date_time
     );
   }
 
@@ -866,7 +854,7 @@ static void ui_draw_infobar(UIState *s) {
   nvgFillColor(s->vg, nvgRGBA(0, 0, 0, 180));
   nvgFill(s->vg);
 
-  nvgFontSize(s->vg, hasSidebar? 35:42);
+  nvgFontSize(s->vg, hasSidebar? 43:50);
   nvgFontFace(s->vg, "courbd");
   nvgFillColor(s->vg, nvgRGBA(255, 255, 255, 180));
   nvgTextAlign(s->vg, NVG_ALIGN_CENTER);
@@ -1231,6 +1219,28 @@ void ui_draw(UIState *s) {
   }
 }
 
+#ifdef NANOVG_GL3_IMPLEMENTATION
+static const char frame_vertex_shader[] =
+  "#version 150 core\n"
+  "in vec4 aPosition;\n"
+  "in vec4 aTexCoord;\n"
+  "uniform mat4 uTransform;\n"
+  "out vec4 vTexCoord;\n"
+  "void main() {\n"
+  "  gl_Position = uTransform * aPosition;\n"
+  "  vTexCoord = aTexCoord;\n"
+  "}\n";
+
+static const char frame_fragment_shader[] =
+  "#version 150 core\n"
+  "precision mediump float;\n"
+  "uniform sampler2D uTexture;\n"
+  "out vec4 vTexCoord;\n"
+  "out vec4 outColor;\n"
+  "void main() {\n"
+  "  outColor = texture(uTexture, vTexCoord.xy);\n"
+  "}\n";
+#else
 static const char frame_vertex_shader[] =
   "attribute vec4 aPosition;\n"
   "attribute vec4 aTexCoord;\n"
@@ -1248,24 +1258,7 @@ static const char frame_fragment_shader[] =
   "void main() {\n"
   "  gl_FragColor = texture2D(uTexture, vTexCoord.xy);\n"
   "}\n";
-
-static const char line_vertex_shader[] =
-  "attribute vec4 aPosition;\n"
-  "attribute vec4 aColor;\n"
-  "uniform mat4 uTransform;\n"
-  "varying vec4 vColor;\n"
-  "void main() {\n"
-  "  gl_Position = uTransform * aPosition;\n"
-  "  vColor = aColor;\n"
-  "}\n";
-
-static const char line_fragment_shader[] =
-  "precision mediump float;\n"
-  "uniform sampler2D uTexture;\n"
-  "varying vec4 vColor;\n"
-  "void main() {\n"
-  "  gl_FragColor = vColor;\n"
-  "}\n";
+#endif
 
 static const mat4 device_transform = {{
   1.0,  0.0, 0.0, 0.0,
@@ -1292,16 +1285,16 @@ static const mat4 full_to_wide_frame_transform = {{
 
 void ui_nvg_init(UIState *s) {
   // init drawing
-  s->vg = nvgCreateGLES3(NVG_ANTIALIAS | NVG_STENCIL_STROKES | NVG_DEBUG);
+  s->vg = nvgCreate(NVG_ANTIALIAS | NVG_STENCIL_STROKES | NVG_DEBUG);
   assert(s->vg);
 
   s->font_courbd = nvgCreateFont(s->vg, "courbd", "../assets/fonts/courbd.ttf");
   assert(s->font_courbd >= 0);
-  s->font_sans_regular = nvgCreateFont(s->vg, "sans-regular", "../../dragonpilot/chinese-fonts/NotoSansCJKtc-Regular.otf");
+  s->font_sans_regular = nvgCreateFont(s->vg, "sans-regular", "../assets/fonts/opensans_regular.ttf");
   assert(s->font_sans_regular >= 0);
-  s->font_sans_semibold = nvgCreateFont(s->vg, "sans-semibold", "../../dragonpilot/chinese-fonts/NotoSansCJKtc-Medium.otf");
+  s->font_sans_semibold = nvgCreateFont(s->vg, "sans-semibold", "../assets/fonts/opensans_semibold.ttf");
   assert(s->font_sans_semibold >= 0);
-  s->font_sans_bold = nvgCreateFont(s->vg, "sans-bold", "../../dragonpilot/chinese-fonts/NotoSansCJKtc-Bold.otf");
+  s->font_sans_bold = nvgCreateFont(s->vg, "sans-bold", "../assets/fonts/opensans_bold.ttf");
   assert(s->font_sans_bold >= 0);
 
   assert(s->img_wheel >= 0);
@@ -1325,13 +1318,6 @@ void ui_nvg_init(UIState *s) {
 
   s->frame_texture_loc = glGetUniformLocation(s->frame_program, "uTexture");
   s->frame_transform_loc = glGetUniformLocation(s->frame_program, "uTransform");
-
-  s->line_program = load_program(line_vertex_shader, line_fragment_shader);
-  assert(s->line_program);
-
-  s->line_pos_loc = glGetAttribLocation(s->line_program, "aPosition");
-  s->line_color_loc = glGetAttribLocation(s->line_program, "aColor");
-  s->line_transform_loc = glGetUniformLocation(s->line_program, "uTransform");
 
   glViewport(0, 0, s->fb_w, s->fb_h);
 
