@@ -5,7 +5,6 @@ from opendbc.can.can_define import CANDefine
 from opendbc.can.parser import CANParser
 from selfdrive.config import Conversions as CV
 from selfdrive.car.toyota.values import CAR, DBC, STEER_THRESHOLD, TSS2_CAR, NO_DSU_CAR, HD_STEER_SENSOR_CAR
-GearShifter = car.CarState.GearShifter
 
 from common.realtime import sec_since_boot
 from common.params import Params
